@@ -193,7 +193,7 @@ textarea.inp{min-height:110px;font-size:13px;font-family:ui-monospace,Menlo,mono
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '2026.11.19';
+const APP_VERSION = '2026.11.19b';
 const KEY = 'couple-ledger-v2';
 
 /* ---------- 기본 데이터 ---------- */
@@ -288,7 +288,7 @@ const ownerName = o => o==='joint' ? '공동' : (S.names[o] || o);
 const depositor = id => S.depositors.find(d=>d.id===id);
 const whoName = e => e.type==='deposit' ? ((depositor(e.owner)||{}).name || e.whoName || '기타') : ownerName(e.owner);
 const whoCls = e => e.type==='deposit' ? 'dep' : e.owner;
-const catIcon = (type,cat) => type==='deposit' ? '🏦' : ((S.cats[type]||[]).find(c=>c[0]===cat)||[,'📦'])[1];
+const catIcon = (type,cat) => type==='deposit' ? '🏦' : esc(((S.cats[type]||[]).find(c=>c[0]===cat)||[,'📦'])[1]);
 const method = id => S.methods.find(m=>m.id===id);
 const isLiving = e => e.type==='expense' && !!(method(e.method)||{}).living;
 const lastDay = (y,m) => new Date(y, m, 0).getDate();
@@ -302,6 +302,7 @@ function dayLabel(d){
   const pre = d===t ? '오늘 · ' : d===y ? '어제 · ' : '';
   return `${pre}${dt.getMonth()+1}월 ${dt.getDate()}일 (${w})`;
 }
+const shortWon = v => !v ? '' : v>=10000 ? Math.round(v/10000).toLocaleString('ko-KR')+'만' : v>=1000 ? Math.round(v/1000)+'천' : won(v);
 const sum = (list, f=()=>true) => list.reduce((s,e)=>s+(f(e)?e.amount:0),0);
 let toastT;
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), Math.min(6000, 1800+msg.length*60)); }
@@ -356,7 +357,7 @@ function entryRow(e, withDate){
   if(withDate) sub.push(shortDate(e.date));
   if(e.type==='expense'){ if(e.memo) sub.push(esc(e.cat)); const m = method(e.method); if(m) sub.push(esc(m.name)); }
   else if(e.type==='invest'){ if(e.memo) sub.push(esc(e.cat)); }
-  return `<div class="row" data-edit="${e.id}">
+  return `<div class="row" data-edit="${esc(e.id)}">
     <div class="ico">${catIcon(e.type,e.cat)}</div>
     <div class="mid"><b>${esc(title)}</b>
       <span><span class="tag ${whoCls(e)}">${esc(whoName(e))}</span>${e.recId?'<span class="tag auto">매달</span>':''}${sub.join(' · ')}</span></div>
@@ -403,7 +404,7 @@ function renderHome(){
   <div class="card">
     <h2>${Number(curM.slice(5))}월 총 사용금액 <small>${exp.length}건</small></h2>
     <div class="big exp">${won(total)}원</div>
-    <div class="subline">${prev||total ? `지난달보다 <b class="${diff>0?'exp':'dep'}">${won(Math.abs(diff))}원 ${diff>0?'더':'덜'}</b> 썼어요` : '아직 기록이 없어요'}</div>
+    <div class="subline">${!prev ? (total ? '지난달 기록이 없어서 비교할 수 없어요' : '아직 기록이 없어요') : diff===0 ? '지난달과 똑같이 썼어요' : `지난달보다 <b class="${diff>0?'exp':'dep'}">${won(Math.abs(diff))}원 ${diff>0?'더':'덜'}</b> 썼어요`}</div>
     <div class="sum2" style="margin-top:12px">
       <div><span>생활비 통장에서</span><b>${won(living)}</b></div>
       <div><span>개인 카드·현금</span><b>${won(total-living)}</b></div>
@@ -417,10 +418,12 @@ function renderHome(){
   </div>
   <div class="card"><h2>누가 썼나요</h2>${ownerBar(byOwner,total)}</div>
   <div class="card"><h2>결제수단별</h2>
-    ${S.methods.filter(m=>byMethod[m.id]).map(m=>`<div class="setrow"><span class="l">${m.icon} ${esc(m.name)} ${m.living?'<span class="tag liv">생활비</span>':''}</span><b>${won(byMethod[m.id])}원</b></div>`).join('') || '<div class="empty">지출 기록이 없어요.</div>'}
+    ${S.methods.filter(m=>byMethod[m.id]).map(m=>`<div class="setrow"><span class="l">${esc(m.icon)} ${esc(m.name)} ${m.living?'<span class="tag liv">생활비</span>':''}${m.hidden?' <small style="color:var(--faint)">(숨김)</small>':''}</span><b>${won(byMethod[m.id])}원</b></div>`).join('')}
+    ${(()=>{ const lost = Object.keys(byMethod).filter(id=>!method(id)).reduce((a,id)=>a+byMethod[id],0); return lost ? `<div class="setrow"><span class="l">❔ 결제수단 없음</span><b>${won(lost)}원</b></div>` : ''; })()}
+    ${exp.length ? '' : '<div class="empty">지출 기록이 없어요.</div>'}
   </div>
   <div class="card"><h2>최근 6개월</h2>
-    <div class="trend">${mt.map(x=>`<div class="col ${x.m===curM?'cur':''}"><em>${x.v?Math.round(x.v/10000)+'만':''}</em><i style="height:${x.v/max*80}%"></i><span class="lbl">${Number(x.m.slice(5))}월</span></div>`).join('')}</div>
+    <div class="trend">${mt.map(x=>`<div class="col ${x.m===curM?'cur':''}"><em>${shortWon(x.v)}</em><i style="height:${x.v/max*80}%"></i><span class="lbl">${Number(x.m.slice(5))}월</span></div>`).join('')}</div>
   </div>
   ${pending.length?`<div class="card"><h2>이번 달 남은 고정지출</h2>${pending.sort((a,b)=>a.day-b.day).map(r=>`
     <div class="row"><div class="ico">${catIcon('expense',r.cat)}</div>
@@ -475,7 +478,7 @@ function recRows(kind){
   if(!list.length) return `<div class="empty">${kind==='expense'?'관리비·보험료·구독료처럼 매달 나가는 돈':'매달 넣는 생활비나 투자 적립금'}을 등록하면<br>그날 자동으로 기록돼요.</div>`;
   return list.map(r=>{
     const who = r.type==='deposit' ? {cls:'dep', n:(depositor(r.owner)||{}).name||'기타'} : {cls:r.owner, n:ownerName(r.owner)};
-    return `<div class="row" data-rec="${r.id}">
+    return `<div class="row" data-rec="${esc(r.id)}">
       <div class="ico">${catIcon(r.type,r.cat)}</div>
       <div class="mid"><b>${esc(r.name)}</b><span><span class="tag ${who.cls}">${esc(who.n)}</span>${kind==='expense'?'':TYPE[r.type].label+' · '}매달 ${r.day}일${r.active?'':' · 멈춤'}</span></div>
       <div class="amt ${TYPE[r.type].cls}" style="${r.active?'':'opacity:.4'}">${won(r.amount)}원</div></div>`;
@@ -488,10 +491,11 @@ function renderSettings(){
   <div class="sectitle">💸 지출</div>
   <div class="card"><h2>고정지출 <button class="linkbtn" data-rec="new-expense">+ 추가</button></h2>${recRows('expense')}</div>
   <div class="card"><h2>지출 카테고리 <button class="linkbtn" data-list="expense">편집</button></h2>
-    <div class="hint" style="margin:0">${S.cats.expense.map(c=>c[1]+' '+esc(c[0])).join(' · ')}</div></div>
+    <div class="hint" style="margin:0">${S.cats.expense.map(c=>esc(c[1])+' '+esc(c[0])).join(' · ')}</div></div>
   <div class="card"><h2>결제수단 <button class="linkbtn" data-list="methods">편집</button></h2>
-    ${S.methods.map(m=>`<div class="setrow"><span class="l">${m.icon} ${esc(m.name)}</span>${m.living?'<span class="tag liv">생활비 통장에서 빠짐</span>':'<small style="color:var(--sub)">개인</small>'}</div>`).join('')}
+    ${S.methods.filter(m=>!m.hidden).map(m=>`<div class="setrow"><span class="l">${esc(m.icon)} ${esc(m.name)}</span>${m.living?'<span class="tag liv">생활비 통장에서 빠짐</span>':'<small style="color:var(--sub)">개인</small>'}</div>`).join('')}
   </div>
+  ${S.methods.some(m=>m.hidden)?`<div class="hint" style="margin:-6px 4px 12px">숨긴 결제수단 ${S.methods.filter(m=>m.hidden).length}개 (편집에서 다시 보이게 할 수 있어요)</div>`:''}
   <div class="card"><h2>누가 썼는지 이름</h2>
     ${['a','b','c'].map(k=>`<div class="setrow"><span class="l"><span class="tag ${k}">${esc(S.names[k])}</span></span><button class="minibtn" data-rename="${k}">이름 바꾸기</button></div>`).join('')}
   </div>
@@ -503,7 +507,7 @@ function renderSettings(){
   </div>
   <div class="card"><h2>매달 모으기 <button class="linkbtn" data-rec="new-save">+ 추가</button></h2>${recRows('save')}</div>
   <div class="card"><h2>투자 종류 <button class="linkbtn" data-list="invest">편집</button></h2>
-    <div class="hint" style="margin:0">${S.cats.invest.map(c=>c[1]+' '+esc(c[0])).join(' · ')}</div></div>
+    <div class="hint" style="margin:0">${S.cats.invest.map(c=>esc(c[1])+' '+esc(c[0])).join(' · ')}</div></div>
 
   <div class="sectitle">📱 기타</div>
   <div class="card"><h2>백업</h2>
@@ -531,7 +535,7 @@ function openModal(html, onMount, onClose){
   $('#modal').innerHTML = `<div class="dim"><div class="sheet"><div class="grab"></div>${html}</div></div>`;
   const dim = $('#modal .dim');
   dim.addEventListener('click', e=>{ if(e.target===dim) closeModal(); });
-  if(!modalOpen){ try{ history.pushState({m:1},''); }catch(e){} }
+  if(!modalOpen){ if(pendingBacks>0) needPush = true; else pushModalState(); }
   modalOpen = true;
   onMount && onMount($('#modal .sheet'));
 }
@@ -539,10 +543,22 @@ function closeModal(fromPop){
   if(!modalOpen) return;
   modalOpen = false; $('#modal').innerHTML='';
   const done = modalOnClose; modalOnClose = null;
-  if(!fromPop){ try{ history.back(); }catch(e){} }
+  if(!fromPop && hasModalState){ hasModalState = false; pendingBacks++; clearTimeout(backTimer); backTimer = setTimeout(backSettled, 700); try{ history.back(); }catch(e){ backSettled(); } }
+  else if(fromPop) hasModalState = false;
   if(done) done();
 }
-window.addEventListener('popstate', ()=>{ if(modalOpen) closeModal(true); });
+/* 창을 닫으며 부른 history.back()이 끝나기 전에 새 창이 열리면, 그 뒤로가기가 새 창을 닫아버릴 수 있어요.
+   → 내가 부른 뒤로가기는 세어 두었다가 무시하고, 새 창의 기록은 뒤로가기가 끝난 뒤에 남겨요. */
+let pendingBacks = 0, needPush = false, hasModalState = false, backTimer = null;
+function pushModalState(){ try{ history.pushState({m:1},''); hasModalState = true; }catch(e){} }
+function backSettled(){
+  pendingBacks = 0; clearTimeout(backTimer);
+  if(needPush){ needPush = false; if(modalOpen && !hasModalState) pushModalState(); }
+}
+window.addEventListener('popstate', ()=>{
+  if(pendingBacks > 0){ if(--pendingBacks === 0) backSettled(); return; }
+  if(modalOpen) closeModal(true);
+});
 function swapModal(fn){ closeModal(); setTimeout(fn, 60); }
 function confirmBox(msg, okLabel, onOk){
   openModal(`<h3>${msg}</h3><div class="btns"><button class="btn" id="cNo">취소</button><button class="btn pri" id="cOk" style="background:var(--exp)">${okLabel}</button></div>`, s=>{
@@ -573,31 +589,36 @@ function fieldsHTML(){
 function paintParts(s, st){
   s.querySelectorAll('.seg [data-type]').forEach(b=>b.classList.toggle('on', b.dataset.type===st.type));
   // 누가
+  const keep = st.orig || {};   // 고치는 중인 기록의 원래 값 (목록에서 빠졌어도 그대로 두기)
   let owners;
   if(st.type==='deposit'){
     owners = S.depositors.map(d=>({id:d.id, n:d.name, cls:'dep'}));
+    if(keep.type==='deposit' && keep.owner && !owners.some(o=>o.id===keep.owner)) owners.push({id:keep.owner, n:(keep.whoName||'기타')+' (뺀 사람)', cls:'dep'});
     if(!owners.some(o=>o.id===st.owner)) st.owner = owners[0]?.id || '';
   } else {
     owners = OWNERS.map(o=>({id:o, n:ownerName(o), cls:o}));
     if(!OWNERS.includes(st.owner)) st.owner = 'joint';
   }
   s.querySelector('#lOwn').textContent = st.type==='expense' ? '누가 썼나요?' : st.type==='deposit' ? '누가 넣었나요?' : '누구 몫인가요?';
-  s.querySelector('#fOwn').innerHTML = owners.map(o=>`<button type="button" data-own="${o.id}" class="${o.cls} ${o.id===st.owner?'on':''}">${esc(o.n)}</button>`).join('')
+  s.querySelector('#fOwn').innerHTML = owners.map(o=>`<button type="button" data-own="${esc(o.id)}" class="${o.cls} ${o.id===st.owner?'on':''}">${esc(o.n)}</button>`).join('')
     + (st.type==='deposit' ? `<button type="button" class="add" data-addown="1">+ 추가</button>` : '');
   if(st.type!=='deposit') s.querySelector('#addOwn').classList.add('hidden');
   // 결제수단
   s.querySelector('#wMethod').classList.toggle('hidden', st.type!=='expense');
   if(st.type==='expense'){
-    if(!method(st.method)) st.method = S.methods[0]?.id||'';
-    s.querySelector('#fMethod').innerHTML = S.methods.map(m=>`<button type="button" data-meth="${m.id}" class="${m.id===st.method?'on':''}"><span>${m.icon}</span><span>${esc(m.name)}${m.living?'<small>생활비</small>':''}</span></button>`).join('');
+    const ms = S.methods.filter(m=>!m.hidden || m.id===keep.method).map(m=>({...m, tail: m.hidden?' (숨김)':''}));
+    if(keep.type==='expense' && keep.method && !method(keep.method)) ms.push({id:keep.method, name:'예전 결제수단', icon:'❔', living:false, tail:' (뺀 것)'});
+    if(!ms.some(m=>m.id===st.method)) st.method = ms[0]?.id||'';
+    s.querySelector('#fMethod').innerHTML = ms.map(m=>`<button type="button" data-meth="${esc(m.id)}" class="${m.id===st.method?'on':''}"><span>${esc(m.icon)}</span><span>${esc(m.name)}${esc(m.tail)}${m.living?'<small>생활비</small>':''}</span></button>`).join('');
   }
   // 카테고리
   s.querySelector('#wCat').classList.toggle('hidden', st.type==='deposit');
   if(st.type!=='deposit'){
-    const cats = S.cats[st.type];
+    const cats = [...S.cats[st.type]];
+    if(keep.type===st.type && keep.cat && !cats.some(c=>c[0]===keep.cat)) cats.push([keep.cat,'📦']);
     if(!cats.some(c=>c[0]===st.cat)) st.cat = cats[0]?.[0] || '';
     s.querySelector('#lCat').textContent = st.type==='expense' ? '카테고리' : '투자 종류';
-    s.querySelector('#fCat').innerHTML = cats.map(([n,i])=>`<button type="button" data-cat="${esc(n)}" class="${n===st.cat?'on':''}"><span class="e">${i}</span>${esc(n)}</button>`).join('')
+    s.querySelector('#fCat').innerHTML = cats.map(([n,i])=>`<button type="button" data-cat="${esc(n)}" class="${n===st.cat?'on':''}"><span class="e">${esc(i)}</span>${esc(n)}</button>`).join('')
       + `<button type="button" class="add" data-addcat="1"><span class="e">＋</span>추가</button>`;
   }
 }
@@ -640,7 +661,7 @@ function openEntry(id, type){
   const e = id ? S.entries.find(x=>x.id===id) : null;
   type = e ? e.type : (type || 'expense');
   const kind = type==='expense' ? 'expense' : 'save';
-  const st = e ? {...e} : {type, amount:0, date: curM===thisMonth()?today():`${curM}-01`, cat:'',
+  const st = e ? {...e, orig:{...e}} : {type, amount:0, date: curM===thisMonth()?today():`${curM}-01`, cat:'',
     owner: type==='deposit'?last.dep : type==='invest'?last.invOwner : last.owner, method:last.method, memo:''};
   const title = e ? (kind==='expense'?'지출 고치기':'모으기 고치기') : (kind==='expense'?'💸 지출 기록':'🏦 모으기 기록');
   openModal(`
@@ -665,7 +686,7 @@ function openEntry(id, type){
       if(st.type==='deposit' && !st.owner) return toast('누가 넣었는지 골라 주세요');
       const memo = s.querySelector('#fMemo').value.trim(), now = Date.now();
       const data = {type:st.type, amount, date, owner:st.owner, memo,
-        whoName: st.type==='deposit' ? (depositor(st.owner)||{}).name||'' : '',
+        whoName: st.type==='deposit' ? ((depositor(st.owner)||{}).name || (e&&e.whoName) || '') : '',
         cat: st.type==='deposit' ? '' : st.cat, method: st.type==='expense' ? st.method : ''};
       const live = e && S.entries.find(x=>x.id===e.id);
       if(live) Object.assign(live, data, {updatedAt:now});
@@ -692,7 +713,7 @@ function openSaveChooser(){
 function openRec(id, kind){
   const r = id ? S.recurring.find(x=>x.id===id) : null;
   kind = r ? (r.type==='expense'?'expense':'save') : kind;
-  const st = r ? {...r} : kind==='expense'
+  const st = r ? {...r, orig:{...r, whoName:(depositor(r.owner)||{}).name}} : kind==='expense'
     ? {type:'expense', name:'', amount:0, cat:'주거·관리비', owner:'joint', method:'toss', day:25, active:true}
     : {type:'deposit', name:'', amount:0, cat:'', owner:S.depositors[0]?.id||'', method:'', day:25, active:true};
   openModal(`
@@ -736,7 +757,7 @@ function renameCat(type, from, to){
 const catList = type => ({
   arr:()=>S.cats[type], name:x=>x[0], icon:x=>x[1], make:(n,i)=>[n,i||'🏷️'],
   set:(x,n,i)=>{ const old=x[0]; x[0]=n; x[1]=i||x[1]; renameCat(type, old, n); },
-  label:x=>`${x[1]} ${esc(x[0])}`
+  label:x=>`${esc(x[1])} ${esc(x[0])}`
 });
 const LISTS = {
   expense:{title:'지출 카테고리', ...catList('expense'), hasIcon:true,
@@ -744,10 +765,11 @@ const LISTS = {
   invest:{title:'투자 종류', ...catList('invest'), hasIcon:true,
     hint:'이름을 누르면 고칠 수 있어요. 이름을 바꾸면 예전 기록도 새 이름으로 바뀌어요.'},
   methods:{title:'결제수단', arr:()=>S.methods, name:m=>m.name, icon:m=>m.icon, hasIcon:true, toggle:true,
-    label:m=>`${m.icon} ${esc(m.name)}<small>${m.living?'생활비 통장에서 빠져요':'개인 돈'}</small>`,
+    label:m=>`${esc(m.icon)} ${esc(m.name)}<small>${m.hidden?'숨김 · ':''}${m.living?'생활비 통장에서 빠져요':'개인 돈'}</small>`,
     make:(n,i)=>({id:uid(), name:n, icon:i||(/현금/.test(n)?'💵':/통장|계좌|이체/.test(n)?'🏦':'💳'), living:false}),
     set:(m,n,i)=>{ m.name=n; m.icon=i||m.icon; },
-    hint:'이름을 누르면 고칠 수 있어요. 스위치를 켠 결제수단으로 쓴 돈만 생활비 통장 잔액에서 빠져요.'},
+    soft:true,
+    hint:'이름을 누르면 고칠 수 있어요. 스위치를 켠 결제수단으로 쓴 돈만 생활비 통장 잔액에서 빠져요. 스위치를 바꾸면 예전 기록까지 잔액이 다시 계산돼요. 숨긴 결제수단은 새 기록에만 안 보이고, 예전 기록과 잔액은 그대로예요.'},
   depositors:{title:'생활비 입금하는 사람', arr:()=>S.depositors, name:d=>d.name, label:d=>esc(d.name),
     make:n=>({id:uid(), name:n}),
     set:(d,n)=>{ d.name=n; for(const e of S.entries) if(e.type==='deposit' && e.owner===d.id) e.whoName=n; },
@@ -762,12 +784,15 @@ function openList(kind){
         <div style="display:flex;gap:6px">${icoInput('eIco', L.icon&&L.icon(x))}<input id="eName" class="inp" maxlength="14" value="${esc(L.name(x))}"></div>
         <div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end"><button class="minibtn" data-ecancel="1">취소</button><button class="minibtn" data-esave="${k}" style="background:var(--pri);color:#fff">저장</button></div>
       </div>`
-    : `<div class="setrow"><button class="l" data-ed="${k}" style="text-align:left;flex:1;min-width:0">${L.label(x)} <span style="font-size:12px;opacity:.55">✏️</span></button>
+    : `<div class="setrow" style="${x.hidden?'opacity:.5':''}"><button class="l" data-ed="${k}" style="text-align:left;flex:1;min-width:0">${(()=>{ const pen=' <span style="font-size:12px;opacity:.55">✏️</span>', h=L.label(x); return h.includes('<small>') ? h.replace('<small>', pen+'<small>') : h+pen; })()}</button>
     <span style="display:flex;gap:4px;align-items:center;flex:none">
       ${L.toggle?`<button class="switch ${x.living?'on':''}" data-tg="${k}" aria-label="생활비 통장"></button>`:''}
       <button class="mv" data-up="${k}" ${k===0?'disabled':''} aria-label="위로">▲</button>
       <button class="mv" data-dn="${k}" ${k===a.length-1?'disabled':''} aria-label="아래로">▼</button>
-      ${a.length>1?`<button class="minibtn" data-del="${k}" style="color:var(--exp);padding:7px 9px">빼기</button>`:''}
+      ${L.soft
+        ? (x.hidden ? `<button class="minibtn" data-unhide="${k}" style="padding:7px 9px">보이기</button>`
+                    : (a.filter(y=>!y.hidden).length>1 ? `<button class="minibtn" data-del="${k}" style="color:var(--exp);padding:7px 9px">숨기기</button>` : ''))
+        : (a.length>1?`<button class="minibtn" data-del="${k}" style="color:var(--exp);padding:7px 9px">빼기</button>`:'')}
     </span></div>`).join(''); };
   openModal(`
     <div class="sheethead"><h3>${L.title}</h3><button class="xbtn" id="lX" aria-label="닫기">✕</button></div>
@@ -800,7 +825,8 @@ function openList(kind){
       }
       if(d.up!==undefined){ const k=+d.up; [a[k-1],a[k]]=[a[k],a[k-1]]; }
       else if(d.dn!==undefined){ const k=+d.dn; [a[k+1],a[k]]=[a[k],a[k+1]]; }
-      else if(d.del!==undefined){ a.splice(+d.del,1); }
+      else if(d.del!==undefined){ if(L.soft) a[+d.del].hidden = true; else a.splice(+d.del,1); }
+      else if(d.unhide!==undefined){ delete a[+d.unhide].hidden; }
       else if(d.tg!==undefined){ a[+d.tg].living = !a[+d.tg].living; }
       else return;
       editing = -1; redraw(true);
@@ -955,7 +981,7 @@ async function syncStart(){
   if(!sync.code || !fbReadyCfg()) return;
   setStatus('connecting');
   try{ sync.db = await fbDb(); }
-  catch(e){ setStatus('error', errText(e)); return; }
+  catch(e){ setStatus('error', errText(e)); retryLater(); return; }
   if(sync.unsub) sync.unsub();
   sync.unsub = docRef().onSnapshot(snap=>{
     if(snap.metadata.hasPendingWrites) return;
@@ -967,7 +993,7 @@ async function syncStart(){
       if(sig(merged) !== sig(cloud)) schedulePush(300);
     } else schedulePush(0);
     sync.lastAt = Date.now(); setStatus('on');
-  }, e=>{ setStatus('error', errText(e)); });
+  }, e=>{ setStatus('error', errText(e)); if(sync.unsub){ sync.unsub(); sync.unsub = null; } retryLater(); });
 }
 function schedulePush(ms=800){
   if(!sync.code || !sync.db) return;
@@ -987,13 +1013,20 @@ async function push(){
     });
     if(sent) adopt(mergeState(S, sent));
     sync.lastAt = Date.now(); setStatus('on');
-  }catch(e){ setStatus('error', errText(e)); }
+  }catch(e){ setStatus('error', errText(e)); retryLater(); }
 }
 function syncStop(){
-  if(sync.unsub) sync.unsub(); sync.unsub = null; clearTimeout(sync.timer);
+  if(sync.unsub) sync.unsub(); sync.unsub = null; clearTimeout(sync.timer); clearTimeout(retryTimer);
   sync.code = ''; writeSync(); setStatus('off');
 }
-window.addEventListener('online', ()=>{ if(sync.code){ if(sync.status==='error') syncStart(); else schedulePush(0); } });
+function resync(){
+  if(!sync.code || !fbReadyCfg()) return;
+  if(sync.status==='error' || !sync.unsub) syncStart(); else schedulePush(0);
+}
+window.addEventListener('online', resync);
+window.addEventListener('pageshow', e=>{ if(e.persisted) resync(); });
+let retryTimer = null;
+function retryLater(){ clearTimeout(retryTimer); retryTimer = setTimeout(()=>{ if(sync.status==='error') resync(); }, 20000); }
 
 const WORDS = ['apple','berry','cloud','daisy','ember','fern','grape','honey','iris','jelly','kiwi','lemon','maple','mango','olive','peach','pearl','plum','river','sunny','tulip','willow','acorn','bloom','candy','dream','frost','glow','lucky','melon','ocean','pine','rainy','snowy','sugar','tiger','violet','wave','yarn','zest'];
 function newCode(){
@@ -1070,13 +1103,14 @@ $('#view').addEventListener('click', e=>{
   else if(d.act==='synccut') confirmBox('두 폰 연결을 끊을까요?<br><small style="font-weight:400;color:var(--sub)">이 폰의 기록은 그대로 남고, 이후 기록은 이 폰에만 저장돼요.</small>','연결 끊기',()=>{ syncStop(); toast('연결을 끊었어요'); });
   else if(d.act==='backup') openBackup();
   else if(d.act==='restore') openRestore();
-  else if(d.act==='reset') confirmBox('모든 기록과 설정을 지울까요?<br><small style="font-weight:400;color:var(--sub)">되돌릴 수 없어요. 먼저 백업을 만들어 두세요.</small>','모두 지우기',()=>{ S=freshState(); save(); render(); toast('모두 지웠어요'); });
+  else if(d.act==='reset') confirmBox(`모든 기록과 설정을 지울까요?<br><small style="font-weight:400;color:var(--sub)">되돌릴 수 없어요. 먼저 백업을 만들어 두세요.${sync.code?'<br><b style="color:var(--exp)">두 폰이 연결돼 있어서 상대방 폰의 기록도 함께 지워져요.</b>':''}</small>`,'모두 지우기',()=>{ S=freshState(); save(); render(); toast('모두 지웠어요'); });
 });
 let lastDayChecked = today();
 document.addEventListener('visibilitychange', ()=>{
   if(document.visibilityState!=='visible') return;
   if(today()!==lastDayChecked){ if(curM===lastDayChecked.slice(0,7)) curM=thisMonth(); lastDayChecked=today(); }
   runRecurring(); render();
+  resync();
 });
 
 load(); readSync(); runRecurring(); render(); paintSync(); syncStart();
