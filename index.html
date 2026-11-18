@@ -165,6 +165,11 @@ textarea.inp{min-height:110px;font-size:13px;font-family:ui-monospace,Menlo,mono
 .stat{display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--sub)}
 .stat i{width:8px;height:8px;border-radius:50%;background:#bbb;display:inline-block}
 .stat.on i{background:#3aa57a}.stat.connecting i{background:#e0b341}.stat.error i{background:var(--exp)}.stat.error{color:var(--exp)}
+.sheethead{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.sheethead h3{margin:0}
+.xbtn{width:36px;height:36px;border-radius:50%;background:var(--bg);font-size:16px;color:var(--sub);flex:none}
+.setrow button.l{font-weight:600;padding:4px 0}
+.setrow button.l small{display:block;color:var(--sub);font-weight:400;font-size:12.5px}
 .sectitle{font-size:13px;color:var(--sub);font-weight:700;margin:18px 4px 4px}
 </style>
 </head>
@@ -188,7 +193,7 @@ textarea.inp{min-height:110px;font-size:13px;font-family:ui-monospace,Menlo,mono
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '2026.11.18d';
+const APP_VERSION = '2026.11.19';
 const KEY = 'couple-ledger-v2';
 
 /* ---------- 기본 데이터 ---------- */
@@ -520,7 +525,9 @@ function render(){
 
 /* ---------- 팝업 ---------- */
 let modalOpen = false;
-function openModal(html, onMount){
+let modalOnClose = null;
+function openModal(html, onMount, onClose){
+  modalOnClose = onClose || null;
   $('#modal').innerHTML = `<div class="dim"><div class="sheet"><div class="grab"></div>${html}</div></div>`;
   const dim = $('#modal .dim');
   dim.addEventListener('click', e=>{ if(e.target===dim) closeModal(); });
@@ -531,7 +538,9 @@ function openModal(html, onMount){
 function closeModal(fromPop){
   if(!modalOpen) return;
   modalOpen = false; $('#modal').innerHTML='';
+  const done = modalOnClose; modalOnClose = null;
   if(!fromPop){ try{ history.back(); }catch(e){} }
+  if(done) done();
 }
 window.addEventListener('popstate', ()=>{ if(modalOpen) closeModal(true); });
 function swapModal(fn){ closeModal(); setTimeout(fn, 60); }
@@ -558,7 +567,7 @@ function fieldsHTML(){
     <div class="addrow hidden" id="addOwn"><input class="inp" id="addOwnName" maxlength="8" placeholder="예: 부모님, 시댁"><button class="minibtn" id="addOwnOk">추가</button></div>
     <div id="wMethod"><label class="f">결제수단</label><div class="methods" id="fMethod"></div></div>
     <div id="wCat"><label class="f" id="lCat"></label><div class="catgrid" id="fCat"></div>
-      <div class="addrow hidden" id="addCat"><input class="inp" id="addCatIco" style="width:58px;text-align:center" maxlength="2" placeholder="🙂"><input class="inp" id="addCatName" maxlength="10" placeholder="새 이름"><button class="minibtn" id="addCatOk">추가</button></div>
+      <div class="addrow hidden" id="addCat"><input class="inp" id="addCatIco" style="width:58px;text-align:center" maxlength="8" placeholder="🙂"><input class="inp" id="addCatName" maxlength="10" placeholder="새 이름"><button class="minibtn" id="addCatOk">추가</button></div>
     </div>`;
 }
 function paintParts(s, st){
@@ -718,53 +727,85 @@ function openRec(id, kind){
 }
 
 /* ---------- 목록 편집 (카테고리·투자 종류·결제수단·입금자) ---------- */
+// 이름이 바뀌면 예전 기록도 새 이름으로 (카테고리는 기록에 이름으로 저장돼 있어서)
+function renameCat(type, from, to){
+  if(from===to) return;
+  for(const x of [...S.entries, ...S.recurring]) if(x.type===type && x.cat===from) x.cat = to;
+  if(type==='expense' && fCat===from) fCat = to;
+}
+const catList = type => ({
+  arr:()=>S.cats[type], name:x=>x[0], icon:x=>x[1], make:(n,i)=>[n,i||'🏷️'],
+  set:(x,n,i)=>{ const old=x[0]; x[0]=n; x[1]=i||x[1]; renameCat(type, old, n); },
+  label:x=>`${x[1]} ${esc(x[0])}`
+});
 const LISTS = {
-  expense:{title:'지출 카테고리', arr:()=>S.cats.expense, label:x=>`${x[1]} ${esc(x[0])}`, name:x=>x[0], icon:true, make:(n,i)=>[n,i||'🏷️'],
-    hint:'빼도 이미 적은 기록은 그대로 남아요. ▲▼로 순서를 바꾸면 기록 화면에도 그 순서로 보여요.'},
-  invest:{title:'투자 종류', arr:()=>S.cats.invest, label:x=>`${x[1]} ${esc(x[0])}`, name:x=>x[0], icon:true, make:(n,i)=>[n,i||'🏷️'],
-    hint:'빼도 이미 적은 기록은 그대로 남아요.'},
-  methods:{title:'결제수단', arr:()=>S.methods, label:m=>`${m.icon} ${esc(m.name)}<small>${m.living?'생활비 통장에서 빠져요':'개인 돈'}</small>`, name:m=>m.name,
-    make:n=>({id:uid(), name:n, icon:/현금/.test(n)?'💵':/통장|계좌|이체/.test(n)?'🏦':'💳', living:false}),
-    hint:'스위치를 켠 결제수단으로 쓴 돈만 생활비 통장 잔액에서 빠져요.', toggle:true},
-  depositors:{title:'생활비 입금하는 사람', arr:()=>S.depositors, label:d=>esc(d.name), name:d=>d.name, make:n=>({id:uid(), name:n}),
-    hint:'빼도 이미 적은 입금 기록은 그대로 남아요.'}
+  expense:{title:'지출 카테고리', ...catList('expense'), hasIcon:true,
+    hint:'이름을 누르면 고칠 수 있어요. 이름을 바꾸면 예전 기록도 새 이름으로 바뀌어요. 빼도 이미 적은 기록은 그대로 남아요.'},
+  invest:{title:'투자 종류', ...catList('invest'), hasIcon:true,
+    hint:'이름을 누르면 고칠 수 있어요. 이름을 바꾸면 예전 기록도 새 이름으로 바뀌어요.'},
+  methods:{title:'결제수단', arr:()=>S.methods, name:m=>m.name, icon:m=>m.icon, hasIcon:true, toggle:true,
+    label:m=>`${m.icon} ${esc(m.name)}<small>${m.living?'생활비 통장에서 빠져요':'개인 돈'}</small>`,
+    make:(n,i)=>({id:uid(), name:n, icon:i||(/현금/.test(n)?'💵':/통장|계좌|이체/.test(n)?'🏦':'💳'), living:false}),
+    set:(m,n,i)=>{ m.name=n; m.icon=i||m.icon; },
+    hint:'이름을 누르면 고칠 수 있어요. 스위치를 켠 결제수단으로 쓴 돈만 생활비 통장 잔액에서 빠져요.'},
+  depositors:{title:'생활비 입금하는 사람', arr:()=>S.depositors, name:d=>d.name, label:d=>esc(d.name),
+    make:n=>({id:uid(), name:n}),
+    set:(d,n)=>{ d.name=n; for(const e of S.entries) if(e.type==='deposit' && e.owner===d.id) e.whoName=n; },
+    hint:'이름을 누르면 고칠 수 있어요. 빼도 이미 적은 입금 기록은 그대로 남아요.'}
 };
 function openList(kind){
   const L = LISTS[kind];
-  const draw = () => { const a = L.arr(); return a.map((x,k)=>`<div class="setrow"><span class="l">${L.label(x)}</span>
-    <span style="display:flex;gap:4px;align-items:center">
+  let editing = -1;
+  const icoInput = (id, v) => L.hasIcon ? `<input id="${id}" class="inp" style="width:58px;text-align:center;flex:none" maxlength="8" placeholder="🙂" value="${esc(v||'')}">` : '';
+  const draw = () => { const a = L.arr(); return a.map((x,k)=> k===editing
+    ? `<div class="setrow" style="display:block">
+        <div style="display:flex;gap:6px">${icoInput('eIco', L.icon&&L.icon(x))}<input id="eName" class="inp" maxlength="14" value="${esc(L.name(x))}"></div>
+        <div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end"><button class="minibtn" data-ecancel="1">취소</button><button class="minibtn" data-esave="${k}" style="background:var(--pri);color:#fff">저장</button></div>
+      </div>`
+    : `<div class="setrow"><button class="l" data-ed="${k}" style="text-align:left;flex:1;min-width:0">${L.label(x)} <span style="font-size:12px;opacity:.55">✏️</span></button>
+    <span style="display:flex;gap:4px;align-items:center;flex:none">
       ${L.toggle?`<button class="switch ${x.living?'on':''}" data-tg="${k}" aria-label="생활비 통장"></button>`:''}
       <button class="mv" data-up="${k}" ${k===0?'disabled':''} aria-label="위로">▲</button>
       <button class="mv" data-dn="${k}" ${k===a.length-1?'disabled':''} aria-label="아래로">▼</button>
       ${a.length>1?`<button class="minibtn" data-del="${k}" style="color:var(--exp);padding:7px 9px">빼기</button>`:''}
     </span></div>`).join(''); };
   openModal(`
-    <h3>${L.title}</h3>
-    <div style="display:flex;gap:6px">${L.icon?'<input id="lIco" class="inp" style="width:58px;text-align:center" maxlength="2" placeholder="🙂">':''}<input id="lName" class="inp" maxlength="14" placeholder="새 이름"><button class="minibtn" id="lAdd">추가</button></div>
+    <div class="sheethead"><h3>${L.title}</h3><button class="xbtn" id="lX" aria-label="닫기">✕</button></div>
+    <div style="display:flex;gap:6px">${icoInput('lIco','')}<input id="lName" class="inp" maxlength="14" placeholder="새 이름"><button class="minibtn" id="lAdd">추가</button></div>
     <div class="hint">${L.hint}</div>
     <div id="lList" style="margin-top:8px">${draw()}</div>
-    <div class="btns"><button class="btn pri" id="lDone">완료</button></div>
   `, s=>{
-    const redraw = () => { save(); s.querySelector('#lList').innerHTML = draw(); };
+    const list = s.querySelector('#lList');
+    const redraw = (changed) => { if(changed) save(); list.innerHTML = draw();
+      if(editing>=0){ const n = list.querySelector('#eName'); n && n.focus(); } };
+    s.querySelector('#lX').onclick = ()=>closeModal();
     s.querySelector('#lAdd').onclick = ()=>{
-      const n = s.querySelector('#lName').value.trim(), i = L.icon ? s.querySelector('#lIco').value.trim() : '';
+      const n = s.querySelector('#lName').value.trim(), i = L.hasIcon ? s.querySelector('#lIco').value.trim() : '';
       if(!n) return toast('이름을 입력해 주세요');
       if(L.arr().some(x=>L.name(x)===n)) return toast('이미 있어요');
-      L.arr().push(L.make(n,i)); s.querySelector('#lName').value=''; if(L.icon) s.querySelector('#lIco').value='';
-      redraw();
+      L.arr().push(L.make(n,i)); s.querySelector('#lName').value=''; if(L.hasIcon) s.querySelector('#lIco').value='';
+      editing = -1; redraw(true); toast(`'${n}' 추가했어요`);
     };
-    s.querySelector('#lList').onclick = ev=>{
+    list.onclick = ev=>{
       const b = ev.target.closest('button'); if(!b) return;
       const a = L.arr(), d = b.dataset;
+      if(d.ed!==undefined){ editing = +d.ed; return redraw(false); }
+      if(d.ecancel){ editing = -1; return redraw(false); }
+      if(d.esave!==undefined){
+        const k = +d.esave, x = a[k];
+        const n = list.querySelector('#eName').value.trim(), i = L.hasIcon ? list.querySelector('#eIco').value.trim() : '';
+        if(!n) return toast('이름을 입력해 주세요');
+        if(a.some((y,j)=>j!==k && L.name(y)===n)) return toast('같은 이름이 이미 있어요');
+        L.set(x, n, i); editing = -1; redraw(true); return toast('고쳤어요');
+      }
       if(d.up!==undefined){ const k=+d.up; [a[k-1],a[k]]=[a[k],a[k-1]]; }
       else if(d.dn!==undefined){ const k=+d.dn; [a[k+1],a[k]]=[a[k],a[k+1]]; }
       else if(d.del!==undefined){ a.splice(+d.del,1); }
       else if(d.tg!==undefined){ a[+d.tg].living = !a[+d.tg].living; }
       else return;
-      redraw();
+      editing = -1; redraw(true);
     };
-    s.querySelector('#lDone').onclick = ()=>{ closeModal(); render(); };
-  });
+  }, ()=>render());
 }
 
 /* ---------- 기타 설정 팝업 ---------- */
