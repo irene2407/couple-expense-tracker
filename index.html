@@ -31,6 +31,8 @@ header h1{font-size:17px;margin:0;font-weight:700}
 .month{display:flex;align-items:center;gap:4px;font-weight:700;font-size:16px}
 .month button{width:34px;height:34px;border-radius:50%;font-size:18px;color:var(--sub)}
 .month button:active{background:var(--line)}
+#monthLabel{width:auto;height:auto;border-radius:10px;padding:4px 6px;font-weight:700;font-size:16px;color:var(--ink);display:flex;flex-direction:column;align-items:center;line-height:1.15}
+#monthLabel .backnow{font-size:11px;color:var(--pri);font-weight:700}
 main{padding:4px 14px calc(env(safe-area-inset-bottom) + 96px);max-width:560px;margin:0 auto}
 .card{background:var(--card);border-radius:var(--r);padding:16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
 .card h2{font-size:15px;margin:0 0 12px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -178,7 +180,7 @@ textarea.inp{min-height:110px;font-size:13px;font-family:ui-monospace,Menlo,mono
   <h1>🏡 우리집 가계부 <span id="syncDot" title="두 폰 연결 상태"></span></h1>
   <div class="month" id="monthNav">
     <button id="prevM" aria-label="이전 달">‹</button>
-    <span id="monthLabel"></span>
+    <button id="monthLabel" aria-label="이번 달로"></button>
     <button id="nextM" aria-label="다음 달">›</button>
   </div>
 </header>
@@ -193,7 +195,7 @@ textarea.inp{min-height:110px;font-size:13px;font-family:ui-monospace,Menlo,mono
 <div id="toast"></div>
 
 <script>
-const APP_VERSION = '2026.11.19b';
+const APP_VERSION = '2026.11.20';
 const KEY = 'couple-ledger-v2';
 
 /* ---------- 기본 데이터 ---------- */
@@ -226,6 +228,7 @@ function freshState(){
     depositors:[{id:'d1',name:'남편'},{id:'d2',name:'아내'},{id:'d3',name:'기타'}],
     living:{start:0, startDate:''},
     deleted:{},    // 지운 기록 id → 지운 시각 (두 폰 합칠 때 되살아나지 않게)
+    delMonth:{},   // 지운 기록 id → 그 기록의 달 (달별 문서에 삭제 표시를 넣기 위해)
     setAt:{},      // 설정 묶음별 마지막 수정 시각
     entries:[],    // {id,type,amount,date,cat,owner,whoName,method,memo,recId,createdAt,updatedAt}
     recurring:[]   // {id,type,name,amount,cat,owner,method,day,active,startMonth,done:[]}
@@ -238,7 +241,7 @@ function fill(){
   const f=freshState();
   for(const k in f) if(S[k]===undefined) S[k]=f[k];
   for(const k in f.names) if(!S.names[k]) S.names[k]=f.names[k];
-  if(!S.deleted) S.deleted={}; if(!S.setAt) S.setAt={};
+  if(!S.deleted) S.deleted={}; if(!S.setAt) S.setAt={}; if(!S.delMonth) S.delMonth={};
   // 예전 버전: 입금자가 a/b 로 저장된 기록 → 입금자 목록으로
   const map = {a:'d1', b:'d2'};
   for(const x of [...S.entries, ...S.recurring]) if(x.type==='deposit' && map[x.owner]) x.owner = map[x.owner];
@@ -258,9 +261,10 @@ const ITEM_KEYS = ['entries','recurring'];
 let snap0 = null;
 const itemSig = x => { const {updatedAt, done, ...rest} = x; return JSON.stringify(rest); };
 function takeSnap(){
-  snap0 = {blocks:{}, items:{}};
+  snap0 = {blocks:{}, items:{}, month:{}};
   for(const k of BLOCKS) snap0.blocks[k] = JSON.stringify(S[k]);
   for(const key of ITEM_KEYS) for(const x of S[key]) snap0.items[key+':'+x.id] = itemSig(x);
+  for(const e of S.entries) snap0.month[e.id] = String(e.date||'').slice(0,7);
 }
 function stamp(){
   if(!snap0) return;
@@ -271,7 +275,11 @@ function stamp(){
     const id = key+':'+x.id; seen[id] = 1;
     if(snap0.items[id] !== itemSig(x) || !x.updatedAt) x.updatedAt = Math.max(now, (x.updatedAt||0)+1);
   }
-  for(const id in snap0.items) if(!seen[id]) S.deleted[id.split(':')[1]] = now;
+  for(const id in snap0.items) if(!seen[id]){
+    const [key, xid] = [id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':')+1)];
+    S.deleted[xid] = now;
+    if(key==='entries' && snap0.month[xid]) S.delMonth[xid] = snap0.month[xid];
+  }
 }
 function save(){ stamp(); saveLocal(); takeSnap(); schedulePush(); }
 
@@ -311,6 +319,7 @@ function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('sh
 function runRecurring(){
   const tm = thisMonth(), td = new Date().getDate();
   let added = 0;
+  stamp();  // 그 전까지의 변경을 먼저 표시해 두고
   for(const r of S.recurring){
     if(!r.active) continue;
     r.done = r.done || [];
@@ -324,13 +333,13 @@ function runRecurring(){
         if(S.deleted[eid] || S.entries.some(x=>x.id===eid)){ ym = addMonth(ym,1); continue; }
         const now = Date.now();
         S.entries.push({id:eid, type:r.type, amount:r.amount, date:`${ym}-${pad(day)}`, cat:r.cat||'', owner:r.owner,
-          whoName: r.type==='deposit' ? (depositor(r.owner)||{}).name||'' : '', method:r.method||'', memo:r.name, recId:r.id, createdAt:now, updatedAt:now});
+          whoName: r.type==='deposit' ? (depositor(r.owner)||{}).name||'' : '', method:r.method||'', memo:r.name, recId:r.id, createdAt:now, updatedAt:1});  // 1 = 자동으로 만든 그대로 (사람이 고치면 그쪽이 이김)
         added++;
       }
       ym = addMonth(ym, 1);
     }
   }
-  if(added){ save(); toast(`매달 자동 항목 ${added}건을 넣었어요`); }
+  if(added){ saveLocal(); takeSnap(); schedulePush(); toast(`매달 자동 항목 ${added}건을 넣었어요`); }
 }
 
 /* ---------- 계산 ---------- */
@@ -519,7 +528,7 @@ function renderSettings(){
 }
 
 function render(){
-  $('#monthLabel').textContent = monthLabel(curM);
+  $('#monthLabel').innerHTML = esc(monthLabel(curM)) + (curM!==thisMonth() ? ' <small class="backnow">이번 달 ↩</small>' : '');
   $('#monthNav').classList.toggle('hidden', tab==='settings');
   $('#fab').classList.toggle('hidden', tab==='settings');
   $('#fab').style.background = tab==='save' ? 'var(--dep)' : '';
@@ -875,7 +884,7 @@ function openBackup(){
 }
 function openRestore(){
   openModal(`<h3>백업 불러오기</h3><textarea class="inp" id="rTxt" placeholder="복사해 둔 백업 글자를 여기에 붙여넣으세요"></textarea>
-    <div class="hint">⚠️ 지금 기록은 백업 내용으로 바뀌어요.</div>
+    <div class="hint">⚠️ 지금 기록은 백업 내용으로 바뀌어요.${sync.code?'<br><b style="color:var(--exp)">두 폰이 연결돼 있어서, 백업 이후에 상대방이 적은 기록도 지워져요.</b>':''}</div>
     <div class="btns"><button class="btn" id="rNo">취소</button><button class="btn pri" id="rOk">불러오기</button></div>`, s=>{
     s.querySelector('#rNo').onclick=()=>closeModal();
     s.querySelector('#rOk').onclick=()=>{
@@ -903,7 +912,8 @@ const FB_CFG = {
 };
 const FB_VER = '10.14.1';
 const SYNC_KEY = KEY + '-sync';
-const sync = {code:'', deviceId:'', status:'off', err:'', db:null, unsub:null, timer:null, lastAt:0};
+const sync = {code:'', deviceId:'', status:'off', err:'', db:null, unsub:null, unsubM:null, timer:null, lastAt:0,
+  cloudMain:null, cloudMonths:{}, cloudLegacy:null, mainReady:false, monthsReady:false};
 const fbReadyCfg = () => !!FB_CFG.apiKey;
 
 function readSync(){
@@ -917,6 +927,7 @@ function mergeState(a, b){
   const out = JSON.parse(JSON.stringify(a)); b = JSON.parse(JSON.stringify(b));
   out.deleted = out.deleted || {}; out.setAt = out.setAt || {};
   for(const id in (b.deleted||{})) out.deleted[id] = Math.max(out.deleted[id]||0, b.deleted[id]);
+  out.delMonth = Object.assign({}, b.delMonth||{}, out.delMonth||{});
   for(const key of ITEM_KEYS){
     const m = new Map();
     for(const x of out[key]||[]) m.set(x.id, x);
@@ -977,51 +988,122 @@ function paintSync(){
   if(tab==='settings' && !modalOpen) render();
 }
 
+/* ── 한 달씩 나눠 저장 (2026.11.20) ──
+   ledgers/{코드}_ledger/parts/main      : 설정·자동 항목·자동 항목 삭제 표시 (v:2)
+   ledgers/{코드}_ledger/parts/{YYYY-MM} : 그 달 기록 + 그 달 기록 삭제 표시
+   ledgers/{코드}_ledger (예전 한 덩어리) : 읽기만 해요. 아직 업데이트 안 된 폰이 여기에 쓴 기록도 받아서 합쳐요.
+   (새 버전은 예전 문서에 쓰지 않아서, 예전 버전 폰과 서로 덮어쓰며 계속 주고받는 일이 없어요) */
+const partsRef = () => docRef().collection('parts');
+const monthRef = m => partsRef().doc(m);
+const mainRef = () => partsRef().doc('main');
+const monthOf = e => String(e.date||'').slice(0,7);
+const byId = (p,q)=> p.id<q.id?-1:p.id>q.id?1:0;
+function splitLocal(st){
+  const main = {v:2, deleted:{}}, months = {};
+  for(const k in st) if(!['entries','deleted','delMonth'].includes(k)) main[k] = st[k];
+  const M = m => months[m] || (months[m] = {entries:[], deleted:{}});
+  for(const e of st.entries) M(monthOf(e)).entries.push(e);
+  for(const id in (st.deleted||{})){ const m = (st.delMonth||{})[id]; if(m) M(m).deleted[id] = st.deleted[id]; else main.deleted[id] = st.deleted[id]; }
+  for(const m in months) months[m].entries.sort(byId);
+  return {main, months};
+}
+function joinCloud(main, months){
+  const st = main ? JSON.parse(JSON.stringify(main)) : {};
+  delete st.v;
+  st.entries = st.entries || []; st.deleted = st.deleted || {}; st.delMonth = st.delMonth || {};
+  for(const m in months){
+    const p = months[m]; if(!p) continue;
+    st.entries.push(...JSON.parse(JSON.stringify(p.entries||[])));
+    for(const id in (p.deleted||{})){ st.deleted[id] = Math.max(st.deleted[id]||0, p.deleted[id]); st.delMonth[id] = m; }
+  }
+  return st;
+}
+const parsePayload = snap => { if(!snap.exists) return null; try{ return JSON.parse(snap.data().payload); }catch(e){ return null; } };
+const wrap = obj => { const payload = JSON.stringify(obj); if(payload.length > 330000) throw new Error('too-big');
+  return {payload, updatedAt: firebase.firestore.FieldValue.serverTimestamp(), updatedBy: sync.deviceId}; };
+const emptyMonth = () => ({entries:[], deleted:{}});
+function changedParts(st){
+  const L = splitLocal(st);
+  const main = !sync.cloudMain || canon(L.main) !== canon(sync.cloudMain);
+  const months = [];
+  for(const m of new Set([...Object.keys(L.months), ...Object.keys(sync.cloudMonths)]))
+    if(canon(L.months[m] || emptyMonth()) !== canon(sync.cloudMonths[m] || emptyMonth())) months.push(m);
+  return {main, months};
+}
+function cloudState(main, months){
+  const st = joinCloud(main, months);
+  return sync.cloudLegacy ? mergeState(st, sync.cloudLegacy) : st;
+}
+function onCloud(){
+  if(!sync.mainReady || !sync.monthsReady) return;
+  adopt(mergeState(S, cloudState(sync.cloudMain, sync.cloudMonths)));
+  const c = changedParts(S);
+  if(c.main || c.months.length) schedulePush(300);
+  sync.lastAt = Date.now(); setStatus('on');
+}
+function stopListen(){
+  if(sync.unsub) sync.unsub(); if(sync.unsubM) sync.unsubM();
+  sync.unsub = sync.unsubM = null; sync.mainReady = sync.monthsReady = false;
+}
+function listenFail(e){ setStatus('error', errText(e)); stopListen(); retryLater(); }
+
 async function syncStart(){
   if(!sync.code || !fbReadyCfg()) return;
   setStatus('connecting');
   try{ sync.db = await fbDb(); }
   catch(e){ setStatus('error', errText(e)); retryLater(); return; }
-  if(sync.unsub) sync.unsub();
-  sync.unsub = docRef().onSnapshot(snap=>{
+  stopListen(); sync.cloudMain = null; sync.cloudMonths = {}; sync.cloudLegacy = null;
+  sync.unsub = docRef().onSnapshot(snap=>{          // 예전 한 덩어리 문서 (읽기만)
     if(snap.metadata.hasPendingWrites) return;
-    let cloud = null;
-    if(snap.exists){ try{ cloud = JSON.parse(snap.data().payload); }catch(e){} }
-    if(cloud){
-      const merged = mergeState(S, cloud);
-      adopt(merged);
-      if(sig(merged) !== sig(cloud)) schedulePush(300);
-    } else schedulePush(0);
-    sync.lastAt = Date.now(); setStatus('on');
-  }, e=>{ setStatus('error', errText(e)); if(sync.unsub){ sync.unsub(); sync.unsub = null; } retryLater(); });
+    const v = parsePayload(snap);
+    sync.cloudLegacy = v ? {...v, delMonth:{}} : null; sync.mainReady = true; onCloud();
+  }, listenFail);
+  sync.unsubM = partsRef().onSnapshot(qs=>{           // 새 방식: main + 달별 문서
+    if(qs.metadata.hasPendingWrites) return;
+    let main = null; const months = {};
+    qs.forEach(d=>{ const v = parsePayload(d); if(!v) return; if(d.id==='main') main = v; else months[d.id] = v; });
+    sync.cloudMain = main; sync.cloudMonths = months; sync.monthsReady = true; onCloud();
+  }, listenFail);
 }
 function schedulePush(ms=800){
-  if(!sync.code || !sync.db) return;
+  if(!sync.code || !sync.db || !sync.mainReady || !sync.monthsReady) return;
   clearTimeout(sync.timer); sync.timer = setTimeout(push, ms);
 }
+let pushing = false, pushAgain = false;
 async function push(){
-  let sent = null;
+  if(pushing){ pushAgain = true; return; }
+  const parts = changedParts(S);
+  if(!parts.main && !parts.months.length) return;
+  pushing = true;
+  let result = null, wrote = null;
   try{
     await sync.db.runTransaction(async tx=>{
-      const ref = docRef(); const snap = await tx.get(ref);
-      let merged = S;
-      if(snap.exists){ try{ merged = mergeState(S, JSON.parse(snap.data().payload)); }catch(e){} }
-      const payload = JSON.stringify(merged);
-      if(payload.length > 330000) throw new Error('too-big');
-      tx.set(ref, {payload, updatedAt: firebase.firestore.FieldValue.serverTimestamp(), updatedBy: sync.deviceId});
-      sent = merged;
+      // 1) 바뀐 문서를 클라우드에서 새로 읽고 (읽기를 모두 먼저)
+      const snaps = await Promise.all([tx.get(mainRef()), ...parts.months.map(m=>tx.get(monthRef(m)))]);
+      const freshMain = parsePayload(snaps[0]);
+      const freshMonths = {...sync.cloudMonths};
+      parts.months.forEach((m,i)=>{ const v = parsePayload(snaps[i+1]); if(v) freshMonths[m] = v; else delete freshMonths[m]; });
+      // 2) 내 기록과 합친 뒤 3) 바뀐 문서만 다시 저장
+      const merged = mergeState(S, cloudState(freshMain, freshMonths));
+      const L = splitLocal(merged);
+      wrote = {main:L.main, months:{}};
+      tx.set(mainRef(), wrap(L.main));
+      for(const m of parts.months){ const v = L.months[m] || emptyMonth(); wrote.months[m] = v; tx.set(monthRef(m), wrap(v)); }
+      result = merged;
     });
-    if(sent) adopt(mergeState(S, sent));
+    sync.cloudMain = wrote.main; Object.assign(sync.cloudMonths, wrote.months);
+    if(result) adopt(mergeState(S, result));
     sync.lastAt = Date.now(); setStatus('on');
   }catch(e){ setStatus('error', errText(e)); retryLater(); }
+  finally{ pushing = false; if(pushAgain){ pushAgain = false; schedulePush(300); } }
 }
 function syncStop(){
-  if(sync.unsub) sync.unsub(); sync.unsub = null; clearTimeout(sync.timer); clearTimeout(retryTimer);
-  sync.code = ''; writeSync(); setStatus('off');
+  stopListen(); clearTimeout(sync.timer); clearTimeout(retryTimer);
+  sync.code = ''; sync.cloudMain = null; sync.cloudMonths = {}; sync.cloudLegacy = null; writeSync(); setStatus('off');
 }
 function resync(){
   if(!sync.code || !fbReadyCfg()) return;
-  if(sync.status==='error' || !sync.unsub) syncStart(); else schedulePush(0);
+  if(sync.status==='error' || !sync.unsub || !sync.unsubM) syncStart(); else schedulePush(0);
 }
 window.addEventListener('online', resync);
 window.addEventListener('pageshow', e=>{ if(e.persisted) resync(); });
@@ -1084,6 +1166,7 @@ document.querySelector('nav.tabs').addEventListener('click', e=>{
 });
 $('#prevM').onclick = ()=>{ curM = addMonth(curM,-1); render(); };
 $('#nextM').onclick = ()=>{ curM = addMonth(curM,1); render(); };
+$('#monthLabel').onclick = ()=>{ if(curM!==thisMonth()){ curM = thisMonth(); render(); toast('이번 달로 왔어요'); } };
 $('#fab').onclick = ()=> tab==='save' ? openSaveChooser() : openEntry(null,'expense');
 $('#view').addEventListener('click', e=>{
   const t = e.target.closest('[data-edit],[data-fown],[data-fcat],[data-rec],[data-list],[data-rename],[data-act],[data-new]');
